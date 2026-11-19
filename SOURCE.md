@@ -1,123 +1,110 @@
-# SOURCE.md - Data Source Proposals
+# SOURCE.md - Data Source and Schema
 
-Fundamentals of Information Technology 2026-2027, Exercise 1, question 9(b).
+Fundamentals of Information Technology 2026-2027.
 Pair: Eyal Rabby, Lia Golding.
 
-## Ranking
+**Project question.** The same open AI model is sold by many providers through two marketplaces, OpenRouter and Hugging Face. Is the cheapest provider also the least reliable? Does the same provider charge different prices on the two marketplaces, and how do those prices compare with the provider's own list price? At which hours does availability drop?
 
-1. **Idea 1 - AI model providers across marketplaces** (preferred)
-2. Idea 2 - Ben Gurion airport delays vs. local weather
+**How we addressed the staff's comments on the proposal.**
 
----
-
-## Idea 1: Comparing Pricing and Availability of AI Model Providers Across Marketplaces
-
-Since open-source artificial intelligence models are hosted and served by numerous companies and providers, different vendors offer access to the exact same model at varying price points and reliability levels. We propose collecting data from two marketplace platforms (OpenRouter and Hugging Face) that present real-time input/output pricing and live availability for the providers of these models. We will track about 10 popular open models.
-
-### Research Question
-
-Is the cheapest provider for a given AI model also the least reliable (lower availability or more failures)? Is there a price difference for the exact same provider across the two marketplaces, and at which hours do availability drops happen?
-
-### Data Sources
-
-* **Source 1: Provider pricing and live availability from OpenRouter (one request per selected model; the model name is part of the URL):**
-
-  <https://openrouter.ai/api/v1/models/openai/gpt-oss-120b/endpoints>
-
-  Content: JSON, one object per provider endpoint. Fields we use: `provider_name`, `quantization` (for example `fp4`, `bf16`), `pricing.prompt` and `pricing.completion` (USD per token), `context_length`, `status`, `uptime_last_30m` (percent of successful requests in the last 30 minutes).
-
-* **Source 2: Model and provider directory from Hugging Face (one request returns all models):**
-
-  <https://router.huggingface.co/v1/models>
-
-  Content: JSON list of models. For each model, a `providers` list with `provider`, `status` (for example `live`), `pricing.input` and `pricing.output` (USD per million tokens), `context_length`, `first_token_latency_ms` and `throughput` (tokens per second).
-
-### Update Frequency
-
-`uptime_last_30m` is recalculated continuously over a rolling 30-minute window. Prices change only when a provider changes them, and providers are added or removed over time. We will sample once per hour.
-
-### Key or Password
-
-None. Both sources are public APIs that need no API key, password or account.
-
-### Why Does the Data Get Lost?
-
-The 30-minute availability percentage is calculated over a rolling window and is continuously overwritten. Provider prices on both marketplaces change without a public historical archive. Without continuous collection, this history is permanently lost.
-
-### Data Size and Frequency
-
-Measured on 7 November 2026: the OpenRouter response for `gpt-oss-120b` (26 endpoints) is 26,867 bytes, or 2,179 bytes compressed with gzip. The full Hugging Face list is 76,938 bytes, or 7,676 bytes compressed. `gpt-oss-120b` is one of the models with the most providers, so 10 models should take at most about 270 KB from OpenRouter, plus 77 KB from Hugging Face: up to about 350 KB per hourly round. Hourly sampling for about 10 weeks is 1,680 rounds, which could reach about 580 MB uncompressed, over the 500 MB limit. We will therefore store each raw file compressed with gzip: at most about 30 KB per round, under 50 MB for the semester. `normalise.sh` will read the compressed files.
-
-### Sample Data Retrieved
-
-Source 1, OpenRouter, the first two endpoints of `gpt-oss-120b`, with the fields we use (retrieved 2026-11-07 17:18 UTC):
-
-```
-{"provider_name":"PrimeIntellect","quantization":"fp4","pricing":{"prompt":"0.00000002","completion":"0.000000074"},"context_length":131072,"status":0,"uptime_last_30m":100}
-{"provider_name":"Near AI","quantization":"fp4","pricing":{"prompt":"0.00000003","completion":"0.00000015"},"context_length":131072,"status":0,"uptime_last_30m":100}
-```
-
-Command: `curl -s "https://openrouter.ai/api/v1/models/openai/gpt-oss-120b/endpoints" | jq -c '.data.endpoints[:2][] | {provider_name, quantization, pricing: {prompt: .pricing.prompt, completion: .pricing.completion}, context_length, status, uptime_last_30m}'`
-
-Source 2, Hugging Face, the first two providers of the same model (retrieved 2026-11-07 17:19 UTC):
-
-```
-{"provider":"groq","status":"live","context_length":131072,"pricing":{"input":0.15,"output":0.75},"is_free":false,"supports_tools":true,"supports_structured_output":false,"first_token_latency_ms":270.8,"throughput":430.711969029627,"is_model_author":false}
-{"provider":"novita","status":"live","context_length":131072,"pricing":{"input":0.05,"output":0.25},"is_free":false,"supports_tools":true,"supports_structured_output":true,"first_token_latency_ms":490,"throughput":167.35061561806134,"is_model_author":false}
-```
-
-Command: `curl -s "https://router.huggingface.co/v1/models" | jq -c '.data[] | select(.id == "openai/gpt-oss-120b") | .providers[:2][]'`
-
-What the same retrieval showed: OpenRouter listed 26 endpoints from 22 providers for `gpt-oss-120b`, with input prices from USD 0.02 to USD 0.35 per million tokens. Google's endpoint had 3% availability over the last 30 minutes and Amazon Bedrock's 81%, while most others had 100%. Groq's output price was USD 0.60 per million tokens on OpenRouter (`"completion":"0.0000006"` per token) and USD 0.75 on Hugging Face.
+* *Does the data change?* Two snapshots taken about 2 minutes apart on 19 November 2026 (11:34 and 11:37 UTC) already differed: 8 of 279 OpenRouter availability values, 2 prices and 2 status codes changed. Across our four daily manual samples (15-19 November), 18, 14 and 23 model prices changed in the OpenRouter catalog between consecutive samples. One provider (PrimeIntellect) raised its input price for `openai/gpt-oss-120b` from USD 0.02 to USD 0.35 per million tokens between 7 and 19 November.
+* *Units:* OpenRouter prices are USD per single token; Hugging Face and models.dev prices are USD per million tokens. All prices in `dataset.csv` are converted to USD per million tokens (see the translation table).
+* *Enrichment ("why"):* we added two daily sources. models.dev gives each provider's own list price, so we can see whether a marketplace charges more than the provider itself. InferCPI gives the spot rental price of an H100 GPU, as a signal of global demand for compute.
 
 ---
 
-## Idea 2: Ben Gurion Airport Delays vs. Local Weather
+## 1. The sources
 
-We propose collecting flight delay data from Ben Gurion Airport (TLV) and cross-referencing it with local weather conditions to determine whether weather significantly impacts flight delays, or if the correlation between the two is weak.
+| Name | Address | Format | Key or user name | Licence | Sampling frequency |
+|---|---|---|---|---|---|
+| OpenRouter, providers of one model | `https://openrouter.ai/api/v1/models/<model id>/endpoints` (one request per tracked model) | JSON | No | No open-data licence; OpenRouter Terms of Service. Documented public API; `robots.txt` allows `/api/`. | Every hour |
+| Hugging Face router, all models and providers | `https://router.huggingface.co/v1/models` | JSON | No | No open-data licence; Hugging Face Terms of Service. `robots.txt` allows all. | Every hour |
+| models.dev, each provider's own list price | `https://models.dev/api.json` | JSON | No | Open-source project, MIT licence | Once a day |
+| InferCPI, AI and GPU price indices | `https://infercpi.com/v1/latest.json` | JSON | No | Index values CC BY 4.0, credit "InferCPI, infercpi.com" | Once a day (the file itself updates daily) |
 
-### Research Question
+We track 10 open models that both marketplaces sell, chosen on 19 November 2026 as the ones with the most providers on Hugging Face: `deepseek/deepseek-v4.1-flash-1017`, `z-ai/glm-5.3`, `z-ai/glm-5.3-flash`, `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `moonshotai/kimi-k3.1-pro`, `moonshotai/kimi-k3`, `google/gemma-4-26b-a4b-it`, `openai/gpt-oss-20b`, `meta-llama/llama-3.3-70b-instruct`. The list is in `config/models.txt`.
 
-Do departure and arrival delays at Ben Gurion Airport depend on weather conditions (wind speed, temperature, or precipitation), and at which hours? How long before departure does the estimated time start to differ from the scheduled time?
+## 2. What we collect
 
-### Data Sources
+Every hour, `bin/collect.sh` downloads, for each of the 10 models, the list of providers that sell it on OpenRouter (price, compression level, status and the share of successful requests in the last 30 minutes and last day), and the Hugging Face list of all models with their providers (price, status, time to first token and speed). Once a day it also downloads models.dev (every provider's own list price) and InferCPI (GPU rental prices). Each hourly round is saved as one compressed file, `raw/YYYY-mm-dd/HHMM.json.gz`, in UTC. A source that fails is saved as `null` and named in the file's `errors` list; we never fill a gap with guessed values.
 
-* **Ben Gurion flight board from data.gov.il (scheduled time `CHSTOL`, updated time `CHPTOL`, airline, destination, status):**
+## 3. The schema of `dataset.csv`
 
-  <https://data.gov.il/api/3/action/datastore_search?resource_id=e83f763b-b7d7-479e-b172-ae981ddc6de5&limit=5000>
+One row per sample time, source, model and provider offer. A provider can have more than one offer for the same model (for example two compression levels), told apart by `variant`.
 
-  (Without `limit`, the API returns only the first 100 records.)
+| Column | Content | Unit / type |
+|---|---|---|
+| `sample_utc` | Time of the round the row came from | ISO 8601, UTC |
+| `source` | `openrouter`, `huggingface` or `modelsdev` | text |
+| `model` | The model, in OpenRouter's naming | text, lower case |
+| `provider` | The company serving the model, in one common spelling for all sources | text, lower case, letters and digits only |
+| `variant` | OpenRouter's name for this specific offer (empty for the other sources) | text |
+| `quantization` | Compression level of the model at this provider (`fp4`, `fp8`, `bf16`, `unknown`; OpenRouter only) | text |
+| `input_usd_per_m` | Price of input (the text we send) | USD per 1,000,000 tokens |
+| `output_usd_per_m` | Price of output (the text the model writes) | USD per 1,000,000 tokens |
+| `cache_read_usd_per_m` | Price of input the provider already has cached | USD per 1,000,000 tokens |
+| `context_length` | Longest request the offer accepts | tokens |
+| `status` | The source's own status code (OpenRouter: `0` normal, negative values degraded; Hugging Face: `live` / `staging`) | text |
+| `uptime_30m_pct` | Share of successful requests in the last 30 minutes (OpenRouter only) | percent, 0-100 |
+| `uptime_1d_pct` | Same, over the last day (OpenRouter only) | percent, 0-100 |
+| `latency_ms` | Time until the first token arrives (Hugging Face only) | milliseconds |
+| `throughput_tps` | Generation speed (Hugging Face only) | tokens per second |
+| `gpu_h100_spot_usd_hr` | Latest InferCPI median spot price of an H100 SXM GPU at sample time | USD per GPU-hour |
 
-* **Current weather around TLV airport from Open-Meteo:**
+A missing value is left empty; it is never estimated.
 
-  <https://api.open-meteo.com/v1/forecast?latitude=32.018&longitude=34.888&current=temperature_2m,wind_speed_10m,precipitation>
+## 4. Why these columns, and what we leave out
 
-### Update Frequency
+We keep what the research question needs: the price on each side (input, output and cache price), the quality of service (status, uptime, latency, speed), the keys that let us match the same offer across sources (`model`, `provider`, `variant`) and one compute-demand signal (GPU spot price). `context_length` and `quantization` stay because two offers with different limits or compression are not the same product, so a fair price comparison has to account for them.
 
-The flight board is refreshed repeatedly until a flight leaves, and each refresh overwrites the previous estimate (the exact refresh interval will be measured in the first week). The weather `current` values come from 15-minute model data. We will sample both every 2 hours.
+We leave out fields that are fixed or irrelevant to price and reliability: model descriptions, lists of supported request parameters, supported voices and image features, tool-calling flags, `max_completion_tokens`, release dates, and all InferCPI series other than the H100 spot price. OpenRouter's `latency_last_30m` and `throughput_last_30m` are empty (`null`) in public responses, so we take latency and speed from Hugging Face only. The raw files keep everything, so a dropped field can be added later by changing `normalise.sh`.
 
-### Key or Password
+## 5. Translation from source fields to schema columns
 
-None. Open-Meteo is free for non-commercial use.
+| Column | OpenRouter (`data.endpoints[]`) | Hugging Face (`data[].providers[]`) | models.dev (`<provider>.models.<id>`) |
+|---|---|---|---|
+| `model` | the requested model id | `data[].id`, lower case, mapped to OpenRouter's id | `canonical_model_id`, mapped to OpenRouter's id |
+| `provider` | first part of `tag` (e.g. `near-ai/fp4` → `nearai`) | `provider` | the top-level provider key |
+| `variant` | `tag` | - | - |
+| `quantization` | `quantization` | - | - |
+| `input_usd_per_m` | `pricing.prompt` × 1,000,000 | `pricing.input` | `cost.input` |
+| `output_usd_per_m` | `pricing.completion` × 1,000,000 | `pricing.output` | `cost.output` |
+| `cache_read_usd_per_m` | `pricing.input_cache_read` × 1,000,000 | - | `cost.cache_read` |
+| `context_length` | `context_length` | `context_length` | `limit.context` |
+| `status` | `status` | `status` | - |
+| `uptime_30m_pct` | `uptime_last_30m` | - | - |
+| `uptime_1d_pct` | `uptime_last_1d` | - | - |
+| `latency_ms` | - | `first_token_latency_ms` | - |
+| `throughput_tps` | - | `throughput` | - |
+| `gpu_h100_spot_usd_hr` | from InferCPI: `latest["gpu_spot/h100_sxm_median_usd_hr"].value` | (same) | (same) |
+| `sample_utc` | the round file's `collected_utc` | (same) | (same) |
 
-### Why Does the Data Get Lost?
+Spelling differences that need a mapping:
 
-The live flight board only reflects the current state of active flights and overwrites past entries upon completion. The history we collect will be the only existing record of these transient delay updates.
+* Providers: all names are lower-cased and stripped of spaces and hyphens (`Near AI`, `near-ai` → `nearai`). A short alias list covers the rest, for example `fireworks-ai` → `fireworks`, `google-vertex` → `google`, `mancer` → `mancer2`.
+* Models: models.dev names some model families differently from OpenRouter, for example `zhipuai/glm-5.3` → `z-ai/glm-5.3`, `alibaba/qwen3.8-27b` → `qwen/qwen3.8-27b`, `meta/llama-3.3-70b-instruct` → `meta-llama/llama-3.3-70b-instruct`.
 
-### Data Size and Frequency
+## 6. Expected size after one semester
 
-A full query of the flight board returned 689,293 bytes (1,888 records). At 12 pulls per day for 10 weeks this would be about 580 MB, over the 500 MB limit, so we will request only the 7 fields we use (about 260 KB per pull), about 220 MB for the semester. The weather response is 412 bytes.
+Measured on 19 November 2026 for the 10 tracked models:
 
-### Sample Data Retrieved
+| Item | Measured size per round or day (gzip) | 10 weeks |
+|---|---|---|
+| Hourly round: OpenRouter (10 requests) + Hugging Face | 22,027 B + 19,406 B = about 41 KB | 1,680 rounds, about 70 MB |
+| Daily: models.dev + InferCPI | 700,928 B + 7,371 B = about 708 KB | 70 days, about 50 MB |
+| Manual samples of 15-19 November (uncompressed, already in `raw/`) | - | 31.9 MB |
+| **Total `raw/`** | | **about 150 MB** |
 
-Flight board, first record (5 November 2026, 21:17 UTC; Hebrew-language fields omitted):
+`dataset.csv`: each hourly round gives about 490 rows (279 OpenRouter offers and 211 Hugging Face offers today), and each day adds about 700 models.dev rows. That is about 870,000 rows over 10 weeks. At about 115 bytes per row this is about **100 MB**.
 
-```
-{"_id": 1, "CHOPER": "AF", "CHFLTN": "8425", "CHOPERD": "AIR FRANCE", "CHSTOL": "2026-11-04T23:55:00", "CHPTOL": "2026-11-04T23:16:00", "CHAORD": "A", "CHLOC1": "AMS", "CHLOC1D": "AMSTERDAM", "CHLOC1T": "AMSTERDAM", "CHLOCCT": "NETHERLANDS", "CHTERM": 3, "CHCINT": "", "CHCKZN": "", "CHRMINE": "LANDED"}
-```
+Together, about 250 MB, under the 500 MB limit. Both marketplaces are growing (the Hugging Face list was 77 KB on 7 November and 227 KB on 19 November uncompressed), so we will check the real size every week and reduce the number of tracked models if needed.
 
-Weather (same time):
+## 7. The manual samples of 15-19 November
 
-```
-{"latitude":31.983053,"longitude":34.856426,"generationtime_ms":0.08320808410644531,"utc_offset_seconds":0,"timezone":"GMT","timezone_abbreviation":"GMT","elevation":35.0,"current_units":{"time":"iso8601","interval":"seconds","temperature_2m":"°C","wind_speed_10m":"km/h","precipitation":"mm"},"current":{"time":"2026-11-05T21:15","interval":900,"temperature_2m":19.2,"wind_speed_10m":2.2,"precipitation":0.00}}
-```
+Four samples, one per day, in `raw/2026-11-15` to `raw/2026-11-19`. Each sample is four files: the OpenRouter model catalog (`_or`), the Hugging Face trending list (`_hf`), models.dev (`_modelsdev`) and InferCPI (`_gpu`). They were taken before we settled on the per-provider OpenRouter and Hugging Face addresses above, so they do not contain availability data, and their file names use Israel time (UTC+2) rather than UTC (see README, "What broke"). `raw/` is append-only, so we keep them as they are; `normalise.sh` reads only the hourly `HHMM.json.gz` files. All the numbers we quote about these samples come from `tools/check_samples.sh`.
+
+## Limits
+
+* Availability is measured by OpenRouter from its own traffic; Hugging Face reports latency and speed instead. Reliability is therefore measured differently on each side, and only prices can be compared directly.
+* OpenRouter's terms of service prohibit scripts that scrape or copy service information. We use only its documented public API endpoints at one request per model per hour.
+* Two offers of the "same" model can differ in compression (`fp4` vs `bf16`), so price comparisons are made within the same `quantization` where possible.
